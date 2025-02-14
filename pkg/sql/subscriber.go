@@ -209,6 +209,7 @@ func (s *Subscriber) Subscribe(ctx context.Context, topic string) (o <-chan *mes
 		}
 	}
 
+	ctx = setTopicToContext(ctx, topic)
 	// the information about closing the subscriber is propagated through ctx
 	ctx, cancel := context.WithCancel(ctx)
 	out := make(chan *message.Message)
@@ -246,7 +247,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 		}
 
 		noMsg, err := s.query(ctx, topic, out, logger)
-		backoff := s.config.BackoffManager.HandleError(logger, noMsg, err)
+		backoff := s.config.BackoffManager.HandleError(ctx, logger, noMsg, err)
 		if backoff != 0 {
 			if err != nil {
 				logger = logger.With(watermill.LogFields{"err": err.Error()})

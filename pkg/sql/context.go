@@ -7,7 +7,8 @@ import (
 type contextKey string
 
 const (
-	txContextKey contextKey = "tx"
+	txContextKey    contextKey = "tx"
+	topicContextKey contextKey = "topic"
 )
 
 func setTxToContext(ctx context.Context, tx Tx) context.Context {
@@ -23,4 +24,13 @@ func setTxToContext(ctx context.Context, tx Tx) context.Context {
 func TxFromContext(ctx context.Context) (Tx, bool) {
 	tx, ok := ctx.Value(txContextKey).(Tx)
 	return tx, ok
+}
+
+func setTopicToContext(ctx context.Context, topic string) context.Context {
+	return context.WithValue(ctx, topicContextKey, topic)
+}
+
+func TopicFromContext(ctx context.Context) (string, bool) {
+	topic, ok := ctx.Value(topicContextKey).(string)
+	return topic, ok
 }

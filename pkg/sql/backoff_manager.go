@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 // You could for example create a stateful version that computes a backoff depending on the error frequency or make errors more or less persistent.
 type BackoffManager interface {
 	// HandleError handles the error possibly logging it or returning a backoff time depending on the error or the absence of the message.
-	HandleError(logger watermill.LoggerAdapter, noMsg bool, err error) time.Duration
+	HandleError(ctx context.Context, logger watermill.LoggerAdapter, noMsg bool, err error) time.Duration
 }
 
 func NewDefaultBackoffManager(pollInterval, retryInterval time.Duration) BackoffManager {
@@ -40,7 +41,7 @@ type defaultBackoffManager struct {
 	deadlockIndicators []string
 }
 
-func (d defaultBackoffManager) HandleError(logger watermill.LoggerAdapter, noMsg bool, err error) time.Duration {
+func (d defaultBackoffManager) HandleError(ctx context.Context, logger watermill.LoggerAdapter, noMsg bool, err error) time.Duration {
 	if err != nil {
 		var deadlock bool
 		for _, indicator := range d.deadlockIndicators {

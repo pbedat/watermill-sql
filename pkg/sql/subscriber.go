@@ -58,6 +58,9 @@ type SubscriberConfig struct {
 
 	// InitializeSchema option enables initializing schema on making subscription.
 	InitializeSchema bool
+
+	// NotifyChannel is used to notify subscribers about new messages.
+	NotifyChannel chan struct{}
 }
 
 func (c *SubscriberConfig) setDefaults() {
@@ -233,16 +236,48 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 
 	var sleepTime time.Duration = 0
 	for {
-		select {
-		case <-s.closing:
-			logger.Info("Discarding queued message, subscriber closing", nil)
-			return
+		// Wait for either backoff timeout, notification, or cancellation
+		if sleepTime > 0 {
+			// We need to wait before querying again
+			timer := time.NewTimer(sleepTime)
+			select {
+			case <-s.closing:
+				timer.Stop()
+				logger.Info("Discarding queued message, subscriber closing", nil)
+				return
 
-		case <-ctx.Done():
-			logger.Info("Stopping consume, context canceled", nil)
-			return
+			case <-ctx.Done():
+				timer.Stop()
+				logger.Info("Stopping consume, context canceled", nil)
+				return
 
-		case <-time.After(sleepTime): // Wait if needed
+			case <-timer.C:
+				// Backoff timer expired, proceed to query
+				logger.Trace("Backoff timer expired, querying for messages", nil)
+
+			case <-s.config.NotifyChannel:
+				// Notification received, drain timer and query immediately
+				timer.Stop()
+				logger.Trace("Notification received, querying for messages immediately", nil)
+			}
+		} else {
+			// No backoff needed, but check for notifications or cancellations
+			select {
+			case <-s.closing:
+				logger.Info("Discarding queued message, subscriber closing", nil)
+				return
+
+			case <-ctx.Done():
+				logger.Info("Stopping consume, context canceled", nil)
+				return
+
+			case <-s.config.NotifyChannel:
+				// Notification received, query immediately
+				logger.Trace("Notification received, querying for messages", nil)
+
+			default:
+				// No notification, proceed to query
+			}
 		}
 
 		noMsg, err := s.query(ctx, topic, out, logger)

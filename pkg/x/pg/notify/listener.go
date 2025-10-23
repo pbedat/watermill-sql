@@ -130,7 +130,6 @@ func (l *PostgreSQLListener) start() error {
 }
 
 func (l *PostgreSQLListener) forwardNotifications() error {
-	defer l.wg.Done()
 
 	conn, err := l.pool.Acquire(l.ctx)
 	if err != nil {

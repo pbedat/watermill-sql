@@ -8,6 +8,7 @@ import (
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/samber/lo"
 )
 
 // PostgreSQLListener manages a single PostgreSQL LISTEN connection and distributes
@@ -23,7 +24,7 @@ type PostgreSQLListener struct {
 	notificationErrTimeout time.Duration
 
 	// Map of topic -> list of notification channels
-	subscribers map[string][]chan string
+	subscribers []*ListenChan
 	subMu       sync.RWMutex
 }
 
@@ -46,7 +47,6 @@ func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger wat
 		notificationErrTimeout: config.NotificationErrTimeout,
 		ctx:                    ctx,
 		cancel:                 cancel,
-		subscribers:            make(map[string][]chan string),
 	}
 
 	// Start the single listener
@@ -60,45 +60,37 @@ func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger wat
 
 // Register subscribes to notifications for a specific topic
 // Returns a receive-only channel that will receive the topic name when new messages arrive
-func (l *PostgreSQLListener) Register(topic string) <-chan string {
+func (l *PostgreSQLListener) Register() *ListenChan {
 	l.subMu.Lock()
 	defer l.subMu.Unlock()
 
-	ch := make(chan string, 1)
-	l.subscribers[topic] = append(l.subscribers[topic], ch)
+	ch := make(chan string, 100)
 
-	l.logger.Debug("Registered subscriber for topic", watermill.LogFields{
-		"topic":            topic,
-		"subscriber_count": len(l.subscribers[topic]),
-	})
+	lc := &ListenChan{
+		C: ch,
+		c: ch,
+	}
+	lc.close = func() {
+		close(ch)
+		l.subMu.Lock()
+		defer l.subMu.Unlock()
 
-	return ch
+		l.subscribers = lo.Without(l.subscribers, lc)
+	}
+
+	l.subscribers = append(l.subscribers, lc)
+
+	return lc
 }
 
-// Unregister removes a subscriber for a specific topic
-func (l *PostgreSQLListener) Unregister(topic string, ch <-chan string) {
-	l.subMu.Lock()
-	defer l.subMu.Unlock()
+type ListenChan struct {
+	C     <-chan string
+	c     chan string
+	close func()
+}
 
-	subscribers := l.subscribers[topic]
-	for i, sub := range subscribers {
-		if sub == ch {
-			// Remove this subscriber
-			l.subscribers[topic] = append(subscribers[:i], subscribers[i+1:]...)
-			close(sub)
-
-			l.logger.Debug("Unregistered subscriber for topic", watermill.LogFields{
-				"topic":            topic,
-				"subscriber_count": len(l.subscribers[topic]),
-			})
-
-			// Clean up empty topic entries
-			if len(l.subscribers[topic]) == 0 {
-				delete(l.subscribers, topic)
-			}
-			break
-		}
-	}
+func (l *ListenChan) Close() {
+	l.close()
 }
 
 func (l *PostgreSQLListener) start() error {
@@ -170,13 +162,11 @@ func (l *PostgreSQLListener) forwardNotifications() {
 
 			// Fan out to all subscribers for this topic
 			l.subMu.RLock()
-			subscribers := l.subscribers[topic]
-			l.subMu.RUnlock()
 
-			for _, ch := range subscribers {
+			for _, ch := range l.subscribers {
 				// Non-blocking send to avoid deadlocks
 				select {
-				case ch <- topic:
+				case ch.c <- topic:
 					l.logger.Trace("Forwarded notification to subscriber", watermill.LogFields{
 						"topic": topic,
 					})
@@ -186,6 +176,7 @@ func (l *PostgreSQLListener) forwardNotifications() {
 					})
 				}
 			}
+			l.subMu.RUnlock()
 		}
 	}
 }
@@ -203,14 +194,17 @@ func (l *PostgreSQLListener) Close() error {
 	l.wg.Wait()
 
 	// Close all subscriber channels
+	// Copy the list first to avoid deadlock when closing channels
 	l.subMu.Lock()
-	for topic, subscribers := range l.subscribers {
-		for _, ch := range subscribers {
-			close(ch)
-		}
-		delete(l.subscribers, topic)
-	}
+	subscribers := make([]*ListenChan, len(l.subscribers))
+	copy(subscribers, l.subscribers)
+	l.subscribers = nil
 	l.subMu.Unlock()
+
+	// Now close them without holding the lock
+	for _, ch := range subscribers {
+		close(ch.c)
+	}
 
 	return nil
 }

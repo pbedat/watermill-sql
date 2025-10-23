@@ -60,7 +60,7 @@ type SubscriberConfig struct {
 	InitializeSchema bool
 
 	// NotifyChannel is used to notify subscribers about new messages.
-	NotifyChannel chan struct{}
+	NotifyChannel <-chan string
 }
 
 func (c *SubscriberConfig) setDefaults() {
@@ -255,7 +255,10 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 				// Backoff timer expired, proceed to query
 				logger.Trace("Backoff timer expired, querying for messages", nil)
 
-			case <-s.config.NotifyChannel:
+			case notifiedTopic := <-s.config.NotifyChannel:
+				if topic != notifiedTopic {
+					continue
+				}
 				// Notification received, drain timer and query immediately
 				timer.Stop()
 				logger.Trace("Notification received, querying for messages immediately", nil)
@@ -270,10 +273,6 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 			case <-ctx.Done():
 				logger.Info("Stopping consume, context canceled", nil)
 				return
-
-			case <-s.config.NotifyChannel:
-				// Notification received, query immediately
-				logger.Trace("Notification received, querying for messages", nil)
 
 			default:
 				// No notification, proceed to query

@@ -187,21 +187,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			defer pgListener.Close()
 
 			// Register for topic-specific notifications
-			topicNotifyChan := pgListener.Register(topic)
-			defer pgListener.Unregister(topic, topicNotifyChan)
-
-			// Create a generic notification channel for the subscriber
-			notifyChannel := make(chan struct{}, 1)
-
-			// Forward topic-specific notifications to the generic channel
-			go func() {
-				for range topicNotifyChan {
-					select {
-					case notifyChannel <- struct{}{}:
-					default:
-					}
-				}
-			}()
+			topicNotifyChan := pgListener.Register()
 
 			publisher, err := watermillSQL.NewPublisher(
 				beginner,
@@ -221,7 +207,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 					OffsetsAdapter: offsetsAdapter,
 					PollInterval:   pollInterval,
 					ResendInterval: 100 * time.Millisecond,
-					NotifyChannel:  notifyChannel, // Enable instant notification
+					NotifyChannel:  topicNotifyChan.C, // Enable instant notification
 				},
 				logger,
 			)
@@ -281,22 +267,8 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		require.NoError(t, err)
 		defer pgListener.Close()
 
-		// Register for topic-specific notifications
-		topicNotifyChan := pgListener.Register(topic)
-		defer pgListener.Unregister(topic, topicNotifyChan)
-
-		// Create a generic notification channel for the subscriber
-		notifyChannel := make(chan struct{}, 1)
-
-		// Forward topic-specific notifications to the generic channel
-		go func() {
-			for range topicNotifyChan {
-				select {
-				case notifyChannel <- struct{}{}:
-				default:
-				}
-			}
-		}()
+		// Register for notifications
+		topicNotifyChan := pgListener.Register()
 
 		time.Sleep(100 * time.Millisecond)
 
@@ -318,7 +290,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter: offsetsAdapter,
 				PollInterval:   1 * time.Second,
 				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  notifyChannel,
+				NotifyChannel:  topicNotifyChan.C,
 			},
 			logger,
 		)
@@ -386,22 +358,8 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			logger)
 		require.NoError(t, err)
 
-		// Register for topic-specific notifications
-		topicNotifyChan := pgListener.Register(topic)
-		defer pgListener.Unregister(topic, topicNotifyChan)
-
-		// Create a generic notification channel for the subscriber
-		notifyChannel := make(chan struct{}, 1)
-
-		// Forward topic-specific notifications to the generic channel
-		go func() {
-			for range topicNotifyChan {
-				select {
-				case notifyChannel <- struct{}{}:
-				default:
-				}
-			}
-		}()
+		// Register for notifications
+		topicNotifyChan := pgListener.Register()
 
 		time.Sleep(100 * time.Millisecond)
 
@@ -423,7 +381,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter: offsetsAdapter,
 				PollInterval:   300 * time.Millisecond,
 				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  notifyChannel,
+				NotifyChannel:  topicNotifyChan.C,
 			},
 			logger,
 		)
@@ -493,35 +451,9 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		topic1 := "test_topic_1"
 		topic2 := "test_topic_2"
 
-		// Register for both topics
-		topic1NotifyChan := pgListener.Register(topic1)
-		defer pgListener.Unregister(topic1, topic1NotifyChan)
-
-		topic2NotifyChan := pgListener.Register(topic2)
-		defer pgListener.Unregister(topic2, topic2NotifyChan)
-
-		// Create notification channels for subscribers
-		notifyChannel1 := make(chan struct{}, 1)
-		notifyChannel2 := make(chan struct{}, 1)
-
-		// Forward topic-specific notifications
-		go func() {
-			for range topic1NotifyChan {
-				select {
-				case notifyChannel1 <- struct{}{}:
-				default:
-				}
-			}
-		}()
-
-		go func() {
-			for range topic2NotifyChan {
-				select {
-				case notifyChannel2 <- struct{}{}:
-				default:
-				}
-			}
-		}()
+		// Register for notifications (single registration for all topics)
+		listenerChan1 := pgListener.Register()
+		listenerChan2 := pgListener.Register()
 
 		// Create publisher
 		publisher, err := watermillSQL.NewPublisher(
@@ -543,7 +475,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter: offsetsAdapter,
 				PollInterval:   1 * time.Second,
 				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  notifyChannel1,
+				NotifyChannel:  listenerChan1.C,
 			},
 			logger,
 		)
@@ -559,7 +491,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter: offsetsAdapter,
 				PollInterval:   1 * time.Second,
 				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  notifyChannel2,
+				NotifyChannel:  listenerChan2.C,
 			},
 			logger,
 		)

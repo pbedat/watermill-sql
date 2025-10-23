@@ -6,17 +6,17 @@ import (
 	wm_sql "github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
 )
 
-type TriggerOffsetsAdapter struct {
-	wm_sql.DefaultPostgreSQLOffsetsAdapter
+type NotifySchemaDecorator struct {
+	wm_sql.DefaultPostgreSQLSchema
 }
 
-func (a TriggerOffsetsAdapter) BeforeSubscribingQueries(params wm_sql.BeforeSubscribingQueriesParams) ([]wm_sql.Query, error) {
-	queries, err := a.DefaultPostgreSQLOffsetsAdapter.BeforeSubscribingQueries(params)
+func (a NotifySchemaDecorator) SchemaInitializingQueries(params wm_sql.SchemaInitializingQueriesParams) ([]wm_sql.Query, error) {
+	queries, err := a.DefaultPostgreSQLSchema.SchemaInitializingQueries(params)
 	if err != nil {
 		return nil, err
 	}
 
-	messageTable := fmt.Sprintf(`"watermill_%s"`, params.Topic)
+	messageTable := a.DefaultPostgreSQLSchema.MessagesTable(params.Topic)
 
 	// Create a single shared notification function (idempotent)
 	queries = append(queries,

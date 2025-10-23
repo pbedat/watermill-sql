@@ -66,20 +66,20 @@ func setup(t *testing.T) fixture {
 	require.NoError(t, err)
 
 	// Create schema adapter with trigger support
-	schemaAdapter := &watermillSQL.DefaultPostgreSQLSchema{
-		GeneratePayloadType: func(t string) string {
-			return "BYTEA" // Use BYTEA for non-JSON payloads
+	schemaAdapter := &notify.NotifySchemaDecorator{
+		watermillSQL.DefaultPostgreSQLSchema{
+			GeneratePayloadType: func(t string) string {
+				return "BYTEA" // Use BYTEA for non-JSON payloads
+			},
 		},
 	}
-
-	offsetsAdapter := notify.TriggerOffsetsAdapter{}
 
 	// Initialize schema
 	beginner := watermillSQL.BeginnerFromStdSQL(db)
 
 	return fixture{
 		schemaAdapter:  schemaAdapter,
-		offsetsAdapter: offsetsAdapter,
+		offsetsAdapter: watermillSQL.DefaultPostgreSQLOffsetsAdapter{},
 		beginner:       beginner,
 		connStr:        connStr,
 		ctx:            ctx,
@@ -179,7 +179,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			defer pool.Close()
 
 			// Get or create singleton listener
-			pgListener, err := notify.GetOrCreateListener(
+			pgListener, err := notify.NewListener(
 				pool,
 				notify.PostgreSQLListenerConfig{},
 				logger)
@@ -274,7 +274,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		defer pool.Close()
 
 		// Get or create singleton listener
-		pgListener, err := notify.GetOrCreateListener(
+		pgListener, err := notify.NewListener(
 			pool,
 			notify.PostgreSQLListenerConfig{},
 			logger)
@@ -378,7 +378,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		require.NoError(t, err)
 
 		// Get or create singleton listener
-		pgListener, err := notify.GetOrCreateListener(
+		pgListener, err := notify.NewListener(
 			pool,
 			notify.PostgreSQLListenerConfig{
 				NotificationErrTimeout: 500 * time.Millisecond,
@@ -482,7 +482,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		defer pool.Close()
 
 		// Get or create singleton listener
-		pgListener, err := notify.GetOrCreateListener(
+		pgListener, err := notify.NewListener(
 			pool,
 			notify.PostgreSQLListenerConfig{},
 			logger)

@@ -31,20 +31,8 @@ type PostgreSQLListenerConfig struct {
 	NotificationErrTimeout time.Duration
 }
 
-var (
-	listenerInstances = make(map[*pgxpool.Pool]*PostgreSQLListener)
-	listenerMu        sync.Mutex
-)
-
-// GetOrCreateListener returns a singleton listener instance for the given pool
-// This ensures only one LISTEN connection is created per database pool
-func GetOrCreateListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger watermill.LoggerAdapter) (*PostgreSQLListener, error) {
-	listenerMu.Lock()
-	defer listenerMu.Unlock()
-
-	if instance, exists := listenerInstances[pool]; exists {
-		return instance, nil
-	}
+// NewListener returns a singleton listener instance for the given pool
+func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger watermill.LoggerAdapter) (*PostgreSQLListener, error) {
 
 	if config.NotificationErrTimeout <= 0 {
 		config.NotificationErrTimeout = 1 * time.Second
@@ -52,7 +40,7 @@ func GetOrCreateListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, lo
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	instance := &PostgreSQLListener{
+	l := &PostgreSQLListener{
 		pool:                   pool,
 		logger:                 logger,
 		notificationErrTimeout: config.NotificationErrTimeout,
@@ -62,13 +50,12 @@ func GetOrCreateListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, lo
 	}
 
 	// Start the single listener
-	if err := instance.start(); err != nil {
+	if err := l.start(); err != nil {
 		cancel()
 		return nil, err
 	}
 
-	listenerInstances[pool] = instance
-	return instance, nil
+	return l, nil
 }
 
 // Register subscribes to notifications for a specific topic
@@ -81,8 +68,8 @@ func (l *PostgreSQLListener) Register(topic string) <-chan string {
 	l.subscribers[topic] = append(l.subscribers[topic], ch)
 
 	l.logger.Debug("Registered subscriber for topic", watermill.LogFields{
-		"topic":             topic,
-		"subscriber_count":  len(l.subscribers[topic]),
+		"topic":            topic,
+		"subscriber_count": len(l.subscribers[topic]),
 	})
 
 	return ch
@@ -224,11 +211,6 @@ func (l *PostgreSQLListener) Close() error {
 		delete(l.subscribers, topic)
 	}
 	l.subMu.Unlock()
-
-	// Remove from global map
-	listenerMu.Lock()
-	delete(listenerInstances, l.pool)
-	listenerMu.Unlock()
 
 	return nil
 }

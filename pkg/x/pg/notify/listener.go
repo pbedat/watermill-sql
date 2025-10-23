@@ -8,12 +8,12 @@ import (
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PostgreSQLListener manages PostgreSQL LISTEN/NOTIFY and bridges to NotifyChannel
 type PostgreSQLListener struct {
-	connStr                string
-	conn                   *pgx.Conn
+	conn                   *pgxpool.Pool
 	notifyChannel          chan struct{}
 	logger                 watermill.LoggerAdapter
 	ctx                    context.Context
@@ -25,11 +25,10 @@ type PostgreSQLListener struct {
 }
 
 type PostgreSQLListenerConfig struct {
-	ConnStr                string
 	NotificationErrTimeout time.Duration
 }
 
-func NewPostgreSQLListener(config PostgreSQLListenerConfig, notifyChannel chan struct{}, logger watermill.LoggerAdapter) *PostgreSQLListener {
+func NewPostgreSQLListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, notifyChannel chan struct{}, logger watermill.LoggerAdapter) *PostgreSQLListener {
 	if config.NotificationErrTimeout <= 0 {
 		config.NotificationErrTimeout = 1 * time.Second
 	}
@@ -37,7 +36,7 @@ func NewPostgreSQLListener(config PostgreSQLListenerConfig, notifyChannel chan s
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &PostgreSQLListener{
-		connStr:                config.ConnStr,
+		conn:                   pool,
 		notifyChannel:          notifyChannel,
 		logger:                 logger,
 		notificationErrTimeout: config.NotificationErrTimeout,
@@ -54,17 +53,9 @@ func (l *PostgreSQLListener) Start(channel string) error {
 		return fmt.Errorf("listener is closed")
 	}
 
-	// Connect to PostgreSQL using pgx
-	conn, err := pgx.Connect(l.ctx, l.connStr)
-	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-	}
-	l.conn = conn
-
 	// Start listening on the channel
-	_, err = conn.Exec(l.ctx, fmt.Sprintf("LISTEN %s", pgx.Identifier{channel}.Sanitize()))
+	_, err := l.conn.Exec(l.ctx, fmt.Sprintf("LISTEN %s", pgx.Identifier{channel}.Sanitize()))
 	if err != nil {
-		conn.Close(l.ctx)
 		return fmt.Errorf("failed to listen on channel %s: %w", channel, err)
 	}
 
@@ -83,8 +74,14 @@ func (l *PostgreSQLListener) forwardNotifications() {
 	defer l.wg.Done()
 
 	for {
+		conn, err := l.conn.Acquire(l.ctx)
+		if err != nil {
+			l.logger.Error("failed to acquire conn to LISTEN", err, nil)
+			time.Sleep(l.notificationErrTimeout)
+			continue
+		}
 		// Wait for notification or context cancellation
-		notification, err := l.conn.WaitForNotification(l.ctx)
+		notification, err := conn.Conn().WaitForNotification(l.ctx)
 
 		if err != nil {
 			if l.ctx.Err() != nil {
@@ -129,8 +126,5 @@ func (l *PostgreSQLListener) Close() error {
 	l.cancel()
 	l.wg.Wait()
 
-	if l.conn != nil {
-		return l.conn.Close(context.Background())
-	}
 	return nil
 }

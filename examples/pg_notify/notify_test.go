@@ -11,6 +11,7 @@ import (
 	watermillSQL "github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
 	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/x/pg/notify"
 	"github.com/ThreeDotsLabs/watermill/message"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -174,13 +175,15 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			pollInterval := 500 * time.Millisecond
 			notifyChannel := make(chan struct{}, 1)
 
+			pool, err := pgxpool.New(ctx, fixture.connStr)
+			require.NoError(t, err)
+
 			// Start PostgreSQL listener
 			pgListener := notify.NewPostgreSQLListener(
-				notify.PostgreSQLListenerConfig{
-					ConnStr: fixture.connStr,
-				},
+				pool,
+				notify.PostgreSQLListenerConfig{},
 				notifyChannel, logger)
-			err := pgListener.Start("watermill_new_messages")
+			err = pgListener.Start("watermill_new_messages")
 			require.NoError(t, err)
 			defer pgListener.Close()
 
@@ -252,13 +255,15 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 
 		notifyChannel := make(chan struct{}, 1)
 
+		pool, err := pgxpool.New(ctx, connStr)
+		require.NoError(t, err)
+
 		// Start PostgreSQL listener
 		pgListener := notify.NewPostgreSQLListener(
-			notify.PostgreSQLListenerConfig{
-				ConnStr: connStr,
-			},
+			pool,
+			notify.PostgreSQLListenerConfig{},
 			notifyChannel, logger)
-		err := pgListener.Start("watermill_new_messages")
+		err = pgListener.Start("watermill_new_messages")
 		require.NoError(t, err)
 		defer pgListener.Close()
 
@@ -338,16 +343,19 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		ctx := fixture.ctx
 		connStr := fixture.connStr
 
+		pool, err := pgxpool.New(ctx, connStr)
+		require.NoError(t, err)
+
 		notifyChannel := make(chan struct{}, 1)
 
 		// Start PostgreSQL listener
 		pgListener := notify.NewPostgreSQLListener(
+			pool,
 			notify.PostgreSQLListenerConfig{
-				ConnStr:                connStr,
 				NotificationErrTimeout: 500 * time.Millisecond,
 			},
 			notifyChannel, logger)
-		err := pgListener.Start("watermill_new_messages")
+		err = pgListener.Start("watermill_new_messages")
 		require.NoError(t, err)
 
 		time.Sleep(100 * time.Millisecond)

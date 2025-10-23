@@ -235,6 +235,8 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 	})
 
 	var sleepTime time.Duration = 0
+	fastRetries := 0
+
 	for {
 		// Wait for either backoff timeout, notification, or cancellation
 		if sleepTime > 0 {
@@ -262,6 +264,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 				// Notification received, drain timer and query immediately
 				timer.Stop()
 				logger.Trace("Notification received, querying for messages immediately", nil)
+				fastRetries = 5
 			}
 		} else {
 			// No backoff needed, but check for notifications or cancellations
@@ -280,6 +283,20 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 		}
 
 		noMsg, err := s.query(ctx, topic, out, logger)
+
+		if noMsg && err == nil {
+			for i := range fastRetries {
+				time.Sleep(time.Millisecond * time.Duration(i+1))
+				noMsg, err = s.query(ctx, topic, out, logger)
+
+				if !noMsg || err != nil {
+					break
+				}
+			}
+		}
+
+		fastRetries = 0
+
 		backoff := s.config.BackoffManager.HandleError(logger, noMsg, err)
 		if backoff != 0 {
 			logFields := watermill.LogFields{

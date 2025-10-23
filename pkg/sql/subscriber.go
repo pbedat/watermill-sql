@@ -294,10 +294,20 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 
 		if noMsg && err == nil {
 			for i := range fastRetries {
-				time.Sleep(s.config.NofifyQueryRetryTimeout * time.Duration(i+1))
+				d := s.config.NofifyQueryRetryTimeout * time.Duration(i+1)
+				s.logger.Trace("no msg arrived after notification, retrying", watermill.LogFields{
+					"retry": i + 1,
+					"wait":  d,
+				})
+
+				time.Sleep(d)
 				noMsg, err = s.query(ctx, topic, out, logger)
 
 				if !noMsg || err != nil {
+					s.logger.Trace("exiting fast retry", watermill.LogFields{
+						"msg_received": !noMsg,
+						"err":          err,
+					})
 					break
 				}
 			}

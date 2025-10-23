@@ -263,7 +263,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 				}
 				// Notification received, drain timer and query immediately
 				timer.Stop()
-				logger.Trace("Notification received, querying for messages immediately", nil)
+				logger.Debug("Notification received, querying for messages immediately", nil)
 				fastRetries = 5
 			}
 		} else {
@@ -286,7 +286,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 
 		if noMsg && err == nil {
 			for i := range fastRetries {
-				time.Sleep(time.Millisecond * time.Duration(i+1))
+				time.Sleep(10 * time.Millisecond * time.Duration(i+1))
 				noMsg, err = s.query(ctx, topic, out, logger)
 
 				if !noMsg || err != nil {

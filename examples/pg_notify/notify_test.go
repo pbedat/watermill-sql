@@ -66,20 +66,20 @@ func setup(t *testing.T) fixture {
 	require.NoError(t, err)
 
 	// Create schema adapter with trigger support
-	schemaAdapter := &watermillSQL.DefaultPostgreSQLSchema{
-		GeneratePayloadType: func(t string) string {
-			return "BYTEA" // Use BYTEA for non-JSON payloads
+	schemaAdapter := &notify.NotifySchemaDecorator{
+		&watermillSQL.DefaultPostgreSQLSchema{
+			GeneratePayloadType: func(t string) string {
+				return "BYTEA" // Use BYTEA for non-JSON payloads
+			},
 		},
 	}
-
-	offsetsAdapter := notify.TriggerOffsetsAdapter{}
 
 	// Initialize schema
 	beginner := watermillSQL.BeginnerFromStdSQL(db)
 
 	return fixture{
 		schemaAdapter:  schemaAdapter,
-		offsetsAdapter: offsetsAdapter,
+		offsetsAdapter: watermillSQL.DefaultPostgreSQLOffsetsAdapter{},
 		beginner:       beginner,
 		connStr:        connStr,
 		ctx:            ctx,

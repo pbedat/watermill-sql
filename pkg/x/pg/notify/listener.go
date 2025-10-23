@@ -101,55 +101,56 @@ func (l *PostgreSQLListener) start() error {
 		return fmt.Errorf("listener is closed")
 	}
 
-	// Start listening on the single global channel
-	_, err := l.pool.Exec(l.ctx, "LISTEN watermill_messages")
-	if err != nil {
-		return fmt.Errorf("failed to listen on channel watermill_messages: %w", err)
-	}
-
 	l.logger.Info("Started PostgreSQL LISTEN", watermill.LogFields{
 		"channel": "watermill_messages",
 	})
 
 	// Start the notification forwarding goroutine
 	l.wg.Add(1)
-	go l.forwardNotifications()
+	go func() {
+		defer l.wg.Done()
+
+		for {
+			err := l.forwardNotifications()
+			if err != nil {
+				if l.ctx.Err() != nil {
+					// Context cancelled, normal shutdown
+					l.logger.Debug("Stopping notification forwarder (context cancelled)", nil)
+					return
+				}
+				l.logger.Error("Error in notification forwarder", err, nil)
+				time.Sleep(l.notificationErrTimeout)
+			} else {
+				return
+			}
+		}
+	}()
 
 	return nil
 }
 
-func (l *PostgreSQLListener) forwardNotifications() {
+func (l *PostgreSQLListener) forwardNotifications() error {
 	defer l.wg.Done()
 
-	for {
-		conn, err := l.pool.Acquire(l.ctx)
-		if err != nil {
-			if l.ctx.Err() != nil {
-				// Context cancelled, normal shutdown
-				l.logger.Debug("Stopping notification forwarder (context cancelled)", nil)
-				return
-			}
+	conn, err := l.pool.Acquire(l.ctx)
+	if err != nil {
+		return err
+	}
 
-			l.logger.Error("failed to acquire conn to LISTEN", err, nil)
-			time.Sleep(l.notificationErrTimeout)
-			continue
-		}
+	defer conn.Release()
+
+	// Start listening on the single global channel
+	_, err = conn.Exec(l.ctx, "LISTEN watermill_messages")
+	if err != nil {
+		return fmt.Errorf("failed to listen on channel watermill_messages: %w", err)
+	}
+
+	for {
 
 		// Wait for notification or context cancellation
 		notification, err := conn.Conn().WaitForNotification(l.ctx)
-		conn.Release()
-
 		if err != nil {
-			if l.ctx.Err() != nil {
-				// Context cancelled, normal shutdown
-				l.logger.Debug("Stopping notification forwarder", nil)
-				return
-			}
-
-			// Connection error
-			l.logger.Error("Error waiting for notification", err, nil)
-			time.Sleep(l.notificationErrTimeout)
-			continue
+			return err
 		}
 
 		if notification != nil {
@@ -159,9 +160,6 @@ func (l *PostgreSQLListener) forwardNotifications() {
 				"channel": notification.Channel,
 				"topic":   topic,
 			})
-
-			// Fan out to all subscribers for this topic
-			l.subMu.RLock()
 
 			for _, ch := range l.subscribers {
 				// Non-blocking send to avoid deadlocks
@@ -176,7 +174,6 @@ func (l *PostgreSQLListener) forwardNotifications() {
 					})
 				}
 			}
-			l.subMu.RUnlock()
 		}
 	}
 }

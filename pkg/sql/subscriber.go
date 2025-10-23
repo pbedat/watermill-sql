@@ -60,7 +60,9 @@ type SubscriberConfig struct {
 	InitializeSchema bool
 
 	// NotifyChannel is used to notify subscribers about new messages.
-	NotifyChannel <-chan string
+	NotifyChannel           <-chan string
+	NofifyQueryRetryTimeout time.Duration
+	NotifyQueryMaxRetries   int
 }
 
 func (c *SubscriberConfig) setDefaults() {
@@ -79,6 +81,12 @@ func (c *SubscriberConfig) setDefaults() {
 	}
 	if c.BackoffManager == nil {
 		c.BackoffManager = NewDefaultBackoffManager(c.PollInterval, c.RetryInterval)
+	}
+	if c.NofifyQueryRetryTimeout == 0 {
+		c.NofifyQueryRetryTimeout = time.Millisecond * 10
+	}
+	if c.NotifyQueryMaxRetries == 0 {
+		c.NotifyQueryMaxRetries = 5
 	}
 }
 
@@ -264,7 +272,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 				// Notification received, drain timer and query immediately
 				timer.Stop()
 				logger.Debug("Notification received, querying for messages immediately", nil)
-				fastRetries = 5
+				fastRetries = s.config.NotifyQueryMaxRetries
 			}
 		} else {
 			// No backoff needed, but check for notifications or cancellations
@@ -286,7 +294,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 
 		if noMsg && err == nil {
 			for i := range fastRetries {
-				time.Sleep(10 * time.Millisecond * time.Duration(i+1))
+				time.Sleep(s.config.NofifyQueryRetryTimeout * time.Duration(i+1))
 				noMsg, err = s.query(ctx, topic, out, logger)
 
 				if !noMsg || err != nil {

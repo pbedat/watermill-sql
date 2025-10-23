@@ -18,21 +18,22 @@ func (a TriggerOffsetsAdapter) BeforeSubscribingQueries(params wm_sql.BeforeSubs
 
 	messageTable := fmt.Sprintf(`"watermill_%s"`, params.Topic)
 
+	// Create a single shared notification function (idempotent)
 	queries = append(queries,
 		wm_sql.Query{
-			Query: fmt.Sprintf(`CREATE OR REPLACE FUNCTION notify_new_message_%[1]s() RETURNS TRIGGER AS $$
+			Query: `CREATE OR REPLACE FUNCTION watermill_notify_message() RETURNS TRIGGER AS $$
 		BEGIN
-			NOTIFY watermill_new_messages_%[1]s;
+			PERFORM pg_notify('watermill_messages', TG_ARGV[0]);
 			RETURN NEW;
 		END;
-		$$ LANGUAGE plpgsql;`, params.Topic),
+		$$ LANGUAGE plpgsql;`,
 		},
 		wm_sql.Query{
-			Query: fmt.Sprintf(`DROP TRIGGER IF EXISTS new_message_trigger_%[1]s ON %[2]s;
-		CREATE TRIGGER new_message_trigger_%[1]s
-		AFTER INSERT ON %[2]s
+			Query: fmt.Sprintf(`DROP TRIGGER IF EXISTS watermill_notify_trigger ON %[1]s;
+		CREATE TRIGGER watermill_notify_trigger
+		AFTER INSERT ON %[1]s
 		FOR EACH STATEMENT
-		EXECUTE FUNCTION notify_new_message_%[1]s();`, params.Topic, messageTable),
+		EXECUTE FUNCTION watermill_notify_message('%[2]s');`, messageTable, params.Topic),
 		})
 
 	return queries, nil

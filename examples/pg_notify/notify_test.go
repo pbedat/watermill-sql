@@ -173,19 +173,35 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			ctx := fixture.ctx
 
 			pollInterval := 500 * time.Millisecond
-			notifyChannel := make(chan struct{}, 1)
 
 			pool, err := pgxpool.New(ctx, fixture.connStr)
 			require.NoError(t, err)
+			defer pool.Close()
 
-			// Start PostgreSQL listener
-			pgListener := notify.NewPostgreSQLListener(
+			// Get or create singleton listener
+			pgListener, err := notify.GetOrCreateListener(
 				pool,
 				notify.PostgreSQLListenerConfig{},
-				notifyChannel, logger)
-			err = pgListener.Start("watermill_new_messages")
+				logger)
 			require.NoError(t, err)
 			defer pgListener.Close()
+
+			// Register for topic-specific notifications
+			topicNotifyChan := pgListener.Register(topic)
+			defer pgListener.Unregister(topic, topicNotifyChan)
+
+			// Create a generic notification channel for the subscriber
+			notifyChannel := make(chan struct{}, 1)
+
+			// Forward topic-specific notifications to the generic channel
+			go func() {
+				for range topicNotifyChan {
+					select {
+					case notifyChannel <- struct{}{}:
+					default:
+					}
+				}
+			}()
 
 			publisher, err := watermillSQL.NewPublisher(
 				beginner,
@@ -253,19 +269,34 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		ctx := fixture.ctx
 		connStr := fixture.connStr
 
-		notifyChannel := make(chan struct{}, 1)
-
 		pool, err := pgxpool.New(ctx, connStr)
 		require.NoError(t, err)
+		defer pool.Close()
 
-		// Start PostgreSQL listener
-		pgListener := notify.NewPostgreSQLListener(
+		// Get or create singleton listener
+		pgListener, err := notify.GetOrCreateListener(
 			pool,
 			notify.PostgreSQLListenerConfig{},
-			notifyChannel, logger)
-		err = pgListener.Start("watermill_new_messages")
+			logger)
 		require.NoError(t, err)
 		defer pgListener.Close()
+
+		// Register for topic-specific notifications
+		topicNotifyChan := pgListener.Register(topic)
+		defer pgListener.Unregister(topic, topicNotifyChan)
+
+		// Create a generic notification channel for the subscriber
+		notifyChannel := make(chan struct{}, 1)
+
+		// Forward topic-specific notifications to the generic channel
+		go func() {
+			for range topicNotifyChan {
+				select {
+				case notifyChannel <- struct{}{}:
+				default:
+				}
+			}
+		}()
 
 		time.Sleep(100 * time.Millisecond)
 
@@ -346,17 +377,31 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		pool, err := pgxpool.New(ctx, connStr)
 		require.NoError(t, err)
 
-		notifyChannel := make(chan struct{}, 1)
-
-		// Start PostgreSQL listener
-		pgListener := notify.NewPostgreSQLListener(
+		// Get or create singleton listener
+		pgListener, err := notify.GetOrCreateListener(
 			pool,
 			notify.PostgreSQLListenerConfig{
 				NotificationErrTimeout: 500 * time.Millisecond,
 			},
-			notifyChannel, logger)
-		err = pgListener.Start("watermill_new_messages")
+			logger)
 		require.NoError(t, err)
+
+		// Register for topic-specific notifications
+		topicNotifyChan := pgListener.Register(topic)
+		defer pgListener.Unregister(topic, topicNotifyChan)
+
+		// Create a generic notification channel for the subscriber
+		notifyChannel := make(chan struct{}, 1)
+
+		// Forward topic-specific notifications to the generic channel
+		go func() {
+			for range topicNotifyChan {
+				select {
+				case notifyChannel <- struct{}{}:
+				default:
+				}
+			}
+		}()
 
 		time.Sleep(100 * time.Millisecond)
 
@@ -419,6 +464,161 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			t.Log("Successfully received message via polling fallback")
 		case <-time.After(3 * time.Second):
 			t.Fatal("Timeout receiving second message - fallback failed")
+		}
+	})
+
+	t.Run("multiple_topics_single_listener", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := setup(t)
+		beginner := fixture.beginner
+		schemaAdapter := fixture.schemaAdapter
+		offsetsAdapter := fixture.offsetsAdapter
+		ctx := fixture.ctx
+		connStr := fixture.connStr
+
+		pool, err := pgxpool.New(ctx, connStr)
+		require.NoError(t, err)
+		defer pool.Close()
+
+		// Get or create singleton listener
+		pgListener, err := notify.GetOrCreateListener(
+			pool,
+			notify.PostgreSQLListenerConfig{},
+			logger)
+		require.NoError(t, err)
+		defer pgListener.Close()
+
+		// Set up two different topics
+		topic1 := "test_topic_1"
+		topic2 := "test_topic_2"
+
+		// Register for both topics
+		topic1NotifyChan := pgListener.Register(topic1)
+		defer pgListener.Unregister(topic1, topic1NotifyChan)
+
+		topic2NotifyChan := pgListener.Register(topic2)
+		defer pgListener.Unregister(topic2, topic2NotifyChan)
+
+		// Create notification channels for subscribers
+		notifyChannel1 := make(chan struct{}, 1)
+		notifyChannel2 := make(chan struct{}, 1)
+
+		// Forward topic-specific notifications
+		go func() {
+			for range topic1NotifyChan {
+				select {
+				case notifyChannel1 <- struct{}{}:
+				default:
+				}
+			}
+		}()
+
+		go func() {
+			for range topic2NotifyChan {
+				select {
+				case notifyChannel2 <- struct{}{}:
+				default:
+				}
+			}
+		}()
+
+		// Create publisher
+		publisher, err := watermillSQL.NewPublisher(
+			beginner,
+			watermillSQL.PublisherConfig{
+				SchemaAdapter: schemaAdapter,
+			},
+			logger,
+		)
+		require.NoError(t, err)
+		defer publisher.Close()
+
+		// Create subscriber for topic 1
+		subscriber1, err := watermillSQL.NewSubscriber(
+			beginner,
+			watermillSQL.SubscriberConfig{
+				ConsumerGroup:  consumerGroup + "_multi_topic1",
+				SchemaAdapter:  schemaAdapter,
+				OffsetsAdapter: offsetsAdapter,
+				PollInterval:   1 * time.Second,
+				ResendInterval: 100 * time.Millisecond,
+				NotifyChannel:  notifyChannel1,
+			},
+			logger,
+		)
+		require.NoError(t, err)
+		defer subscriber1.Close()
+
+		// Create subscriber for topic 2
+		subscriber2, err := watermillSQL.NewSubscriber(
+			beginner,
+			watermillSQL.SubscriberConfig{
+				ConsumerGroup:  consumerGroup + "_multi_topic2",
+				SchemaAdapter:  schemaAdapter,
+				OffsetsAdapter: offsetsAdapter,
+				PollInterval:   1 * time.Second,
+				ResendInterval: 100 * time.Millisecond,
+				NotifyChannel:  notifyChannel2,
+			},
+			logger,
+		)
+		require.NoError(t, err)
+		defer subscriber2.Close()
+
+		// Initialize schemas
+		require.NoError(t, subscriber1.SubscribeInitialize(topic1))
+		require.NoError(t, subscriber2.SubscribeInitialize(topic2))
+
+		// Subscribe to both topics
+		messages1, err := subscriber1.Subscribe(ctx, topic1)
+		require.NoError(t, err)
+
+		messages2, err := subscriber2.Subscribe(ctx, topic2)
+		require.NoError(t, err)
+
+		time.Sleep(200 * time.Millisecond)
+
+		// Publish to topic 1
+		msg1 := message.NewMessage(watermill.NewUUID(), []byte("message for topic 1"))
+		err = publisher.Publish(topic1, msg1)
+		require.NoError(t, err)
+
+		// Publish to topic 2
+		msg2 := message.NewMessage(watermill.NewUUID(), []byte("message for topic 2"))
+		err = publisher.Publish(topic2, msg2)
+		require.NoError(t, err)
+
+		// Verify subscriber 1 receives only topic 1 message
+		select {
+		case receivedMsg := <-messages1:
+			assert.Equal(t, msg1.UUID, receivedMsg.UUID)
+			assert.Equal(t, "message for topic 1", string(receivedMsg.Payload))
+			receivedMsg.Ack()
+			t.Log("Subscriber 1 correctly received topic 1 message")
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timeout receiving message on topic 1")
+		}
+
+		// Verify subscriber 2 receives only topic 2 message
+		select {
+		case receivedMsg := <-messages2:
+			assert.Equal(t, msg2.UUID, receivedMsg.UUID)
+			assert.Equal(t, "message for topic 2", string(receivedMsg.Payload))
+			receivedMsg.Ack()
+			t.Log("Subscriber 2 correctly received topic 2 message")
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timeout receiving message on topic 2")
+		}
+
+		// Ensure no cross-topic messages are received
+		select {
+		case <-messages1:
+			t.Fatal("Subscriber 1 incorrectly received a message (should only get topic 1)")
+		case <-messages2:
+			t.Fatal("Subscriber 2 incorrectly received a message (should only get topic 2)")
+		case <-time.After(500 * time.Millisecond):
+			t.Log("Verified no cross-topic messages received")
 		}
 	})
 }

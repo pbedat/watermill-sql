@@ -204,7 +204,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 					OffsetsAdapter:         offsetsAdapter,
 					PollInterval:           pollInterval,
 					ResendInterval:         100 * time.Millisecond,
-					SubscribeNotifications: pgListener.Register, // Enable instant notification
+					SubscribeNotifications: pgListener.Subscribe, // Enable instant notification
 				},
 				logger,
 			)
@@ -284,7 +284,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter:         offsetsAdapter,
 				PollInterval:           1 * time.Second,
 				ResendInterval:         100 * time.Millisecond,
-				SubscribeNotifications: pgListener.Register,
+				SubscribeNotifications: pgListener.Subscribe,
 			},
 			logger,
 		)
@@ -372,7 +372,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter:         offsetsAdapter,
 				PollInterval:           300 * time.Millisecond,
 				ResendInterval:         100 * time.Millisecond,
-				SubscribeNotifications: pgListener.Register,
+				SubscribeNotifications: pgListener.Subscribe,
 			},
 			logger,
 		)
@@ -462,7 +462,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter:         offsetsAdapter,
 				PollInterval:           1 * time.Second,
 				ResendInterval:         100 * time.Millisecond,
-				SubscribeNotifications: pgListener.Register,
+				SubscribeNotifications: pgListener.Subscribe,
 			},
 			logger,
 		)
@@ -478,7 +478,7 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 				OffsetsAdapter:         offsetsAdapter,
 				PollInterval:           1 * time.Second,
 				ResendInterval:         100 * time.Millisecond,
-				SubscribeNotifications: pgListener.Register,
+				SubscribeNotifications: pgListener.Subscribe,
 			},
 			logger,
 		)

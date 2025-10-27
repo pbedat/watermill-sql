@@ -65,10 +65,10 @@ func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger wat
 	return l, nil
 }
 
-// Register subscribes to notifications for a specific topic.
+// Subscribe subscribes to notifications for a specific topic.
 // Returns a receive-only channel that will be notified when new messages arrive for that topic.
 // The channel will be automatically cleaned up when the context is cancelled.
-func (l *PostgreSQLListener) Register(ctx context.Context, topic string) <-chan struct{} {
+func (l *PostgreSQLListener) Subscribe(ctx context.Context, topic string) <-chan struct{} {
 	l.subMu.Lock()
 	defer l.subMu.Unlock()
 

@@ -36,35 +36,30 @@ EXECUTE FUNCTION notify_new_message();
 
 ### 2. PostgreSQL Listener
 
-A listener is created using `lib/pq`'s `pq.Listener` to subscribe to PostgreSQL notifications and bridge them to Watermill's `NotifyChannel`:
+A listener is created using the `notify.PostgreSQLListener` to subscribe to PostgreSQL notifications:
 
 ```go
-listener := pq.NewListener(
-    connStr,
-    100*time.Millisecond, // minReconnectInterval
-    10*time.Second,       // maxReconnectInterval
-    eventCallback,
-)
-listener.Listen("watermill_new_messages")
-
-// Forward notifications to NotifyChannel
-for notification := range listener.Notify {
-    select {
-    case notifyChannel <- struct{}{}:
-        // Notification sent
-    default:
-        // Channel full, subscriber will poll anyway
-    }
+pool, err := pgxpool.New(ctx, connStr)
+if err != nil {
+    return err
 }
+
+pgListener, err := notify.NewListener(
+    pool,
+    notify.PostgreSQLListenerConfig{},
+    logger,
+)
+if err != nil {
+    return err
+}
+defer pgListener.Close()
 ```
 
 ### 3. Subscriber Configuration
 
-The subscriber is configured with the `NotifyChannel`:
+The subscriber is configured with the `NotifyChannel` function, which takes a context and topic and returns a topic-specific notification channel:
 
 ```go
-notifyChannel := make(chan struct{}, 100)
-
 subscriber, err := sql.NewSubscriber(
     db,
     sql.SubscriberConfig{
@@ -72,11 +67,16 @@ subscriber, err := sql.NewSubscriber(
         SchemaAdapter:  schemaAdapter,
         OffsetsAdapter: offsetsAdapter,
         PollInterval:   500 * time.Millisecond, // Fallback interval
-        NotifyChannel:  notifyChannel,
+        NotifyChannel:  pgListener.Register,     // Pass the Register method
     },
     logger,
 )
 ```
+
+The `NotifyChannel` function will be called automatically by the subscriber with the subscription context and topic. This ensures:
+- Each subscriber receives only notifications for its specific topic
+- The notification channel is automatically cleaned up when the subscription context is cancelled
+- No notifications are lost due to cross-topic interference
 
 ## Running the Tests
 
@@ -109,28 +109,26 @@ The `pq.Listener` automatically handles reconnections with exponential backoff, 
 
 ### Non-Blocking Notifications
 
-The implementation uses non-blocking sends to the `NotifyChannel` to avoid deadlocks. If the channel is full, the notification is dropped, and the subscriber will discover the message on its next poll.
+The implementation uses non-blocking sends to the notification channels to avoid deadlocks. If a channel is full, the notification is dropped, and the subscriber will discover the message on its next poll.
 
-### Notification Draining
+### Automatic Context-Based Cleanup
 
-After receiving a notification, the subscriber drains any additional notifications from the channel to avoid processing stale notifications from multiple rapid inserts.
+When a subscription is cancelled (via context cancellation), the associated notification channel is automatically cleaned up. This prevents resource leaks and ensures proper shutdown.
 
 ## Production Considerations
 
 ### Channel Buffer Size
 
-The `NotifyChannel` should be buffered to handle bursts of notifications without blocking:
-
-```go
-notifyChannel := make(chan struct{}, 100) // Adjust based on expected throughput
-```
+The notification channels are buffered (100 by default) to handle bursts of notifications without blocking. This is configured internally in the `PostgreSQLListener.Register` method.
 
 ### Multiple Topics
 
-For applications with multiple topics, you have two options:
+The new architecture automatically handles multiple topics efficiently:
 
-1. **Single channel**: Use one notification channel for all topics (simpler, less granular)
-2. **Per-topic channels**: Use separate channels and NOTIFY channels per topic (more granular control)
+- Each subscriber gets only notifications for its specific topic
+- Multiple subscribers can listen to the same topic
+- Multiple subscribers can listen to different topics using the same `PostgreSQLListener`
+- No cross-topic notification interference
 
 ### Monitoring
 

@@ -186,9 +186,6 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			require.NoError(t, err)
 			defer pgListener.Close()
 
-			// Register for topic-specific notifications
-			topicNotifyChan := pgListener.Register()
-
 			publisher, err := watermillSQL.NewPublisher(
 				beginner,
 				watermillSQL.PublisherConfig{
@@ -202,12 +199,12 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			subscriber, err := watermillSQL.NewSubscriber(
 				beginner,
 				watermillSQL.SubscriberConfig{
-					ConsumerGroup:  consumerGroup + "_with_notify",
-					SchemaAdapter:  schemaAdapter,
-					OffsetsAdapter: offsetsAdapter,
-					PollInterval:   pollInterval,
-					ResendInterval: 100 * time.Millisecond,
-					NotifyChannel:  topicNotifyChan.C, // Enable instant notification
+					ConsumerGroup:          consumerGroup + "_with_notify",
+					SchemaAdapter:          schemaAdapter,
+					OffsetsAdapter:         offsetsAdapter,
+					PollInterval:           pollInterval,
+					ResendInterval:         100 * time.Millisecond,
+					SubscribeNotifications: pgListener.Register, // Enable instant notification
 				},
 				logger,
 			)
@@ -267,9 +264,6 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		require.NoError(t, err)
 		defer pgListener.Close()
 
-		// Register for notifications
-		topicNotifyChan := pgListener.Register()
-
 		time.Sleep(100 * time.Millisecond)
 
 		publisher, err := watermillSQL.NewPublisher(
@@ -285,12 +279,12 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		subscriber, err := watermillSQL.NewSubscriber(
 			beginner,
 			watermillSQL.SubscriberConfig{
-				ConsumerGroup:  consumerGroup + "_burst",
-				SchemaAdapter:  schemaAdapter,
-				OffsetsAdapter: offsetsAdapter,
-				PollInterval:   1 * time.Second,
-				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  topicNotifyChan.C,
+				ConsumerGroup:          consumerGroup + "_burst",
+				SchemaAdapter:          schemaAdapter,
+				OffsetsAdapter:         offsetsAdapter,
+				PollInterval:           1 * time.Second,
+				ResendInterval:         100 * time.Millisecond,
+				SubscribeNotifications: pgListener.Register,
 			},
 			logger,
 		)
@@ -358,9 +352,6 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 			logger)
 		require.NoError(t, err)
 
-		// Register for notifications
-		topicNotifyChan := pgListener.Register()
-
 		time.Sleep(100 * time.Millisecond)
 
 		publisher, err := watermillSQL.NewPublisher(
@@ -376,12 +367,12 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		subscriber, err := watermillSQL.NewSubscriber(
 			beginner,
 			watermillSQL.SubscriberConfig{
-				ConsumerGroup:  consumerGroup + "_fallback",
-				SchemaAdapter:  schemaAdapter,
-				OffsetsAdapter: offsetsAdapter,
-				PollInterval:   300 * time.Millisecond,
-				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  topicNotifyChan.C,
+				ConsumerGroup:          consumerGroup + "_fallback",
+				SchemaAdapter:          schemaAdapter,
+				OffsetsAdapter:         offsetsAdapter,
+				PollInterval:           300 * time.Millisecond,
+				ResendInterval:         100 * time.Millisecond,
+				SubscribeNotifications: pgListener.Register,
 			},
 			logger,
 		)
@@ -451,10 +442,6 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		topic1 := "test_topic_1"
 		topic2 := "test_topic_2"
 
-		// Register for notifications (single registration for all topics)
-		listenerChan1 := pgListener.Register()
-		listenerChan2 := pgListener.Register()
-
 		// Create publisher
 		publisher, err := watermillSQL.NewPublisher(
 			beginner,
@@ -470,12 +457,12 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		subscriber1, err := watermillSQL.NewSubscriber(
 			beginner,
 			watermillSQL.SubscriberConfig{
-				ConsumerGroup:  consumerGroup + "_multi_topic1",
-				SchemaAdapter:  schemaAdapter,
-				OffsetsAdapter: offsetsAdapter,
-				PollInterval:   1 * time.Second,
-				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  listenerChan1.C,
+				ConsumerGroup:          consumerGroup + "_multi_topic1",
+				SchemaAdapter:          schemaAdapter,
+				OffsetsAdapter:         offsetsAdapter,
+				PollInterval:           1 * time.Second,
+				ResendInterval:         100 * time.Millisecond,
+				SubscribeNotifications: pgListener.Register,
 			},
 			logger,
 		)
@@ -486,12 +473,12 @@ func TestNotifyChannelWithPostgreSQLListenNotify(t *testing.T) {
 		subscriber2, err := watermillSQL.NewSubscriber(
 			beginner,
 			watermillSQL.SubscriberConfig{
-				ConsumerGroup:  consumerGroup + "_multi_topic2",
-				SchemaAdapter:  schemaAdapter,
-				OffsetsAdapter: offsetsAdapter,
-				PollInterval:   1 * time.Second,
-				ResendInterval: 100 * time.Millisecond,
-				NotifyChannel:  listenerChan2.C,
+				ConsumerGroup:          consumerGroup + "_multi_topic2",
+				SchemaAdapter:          schemaAdapter,
+				OffsetsAdapter:         offsetsAdapter,
+				PollInterval:           1 * time.Second,
+				ResendInterval:         100 * time.Millisecond,
+				SubscribeNotifications: pgListener.Register,
 			},
 			logger,
 		)

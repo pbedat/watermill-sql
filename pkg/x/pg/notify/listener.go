@@ -24,8 +24,14 @@ type PostgreSQLListener struct {
 	notificationErrTimeout time.Duration
 
 	// Map of topic -> list of notification channels
-	subscribers []*ListenChan
+	subscribers map[string][]*topicSubscriber
 	subMu       sync.RWMutex
+}
+
+type topicSubscriber struct {
+	ch     chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type PostgreSQLListenerConfig struct {
@@ -47,6 +53,7 @@ func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger wat
 		notificationErrTimeout: config.NotificationErrTimeout,
 		ctx:                    ctx,
 		cancel:                 cancel,
+		subscribers:            make(map[string][]*topicSubscriber),
 	}
 
 	// Start the single listener
@@ -58,39 +65,46 @@ func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger wat
 	return l, nil
 }
 
-// Register subscribes to notifications for a specific topic
-// Returns a receive-only channel that will receive the topic name when new messages arrive
-func (l *PostgreSQLListener) Register() *ListenChan {
+// Register subscribes to notifications for a specific topic.
+// Returns a receive-only channel that will be notified when new messages arrive for that topic.
+// The channel will be automatically cleaned up when the context is cancelled.
+func (l *PostgreSQLListener) Register(ctx context.Context, topic string) <-chan struct{} {
 	l.subMu.Lock()
 	defer l.subMu.Unlock()
 
-	ch := make(chan string, 100)
+	ch := make(chan struct{}, 1)
+	subCtx, cancel := context.WithCancel(ctx)
 
-	lc := &ListenChan{
-		C: ch,
-		c: ch,
-	}
-	lc.close = func() {
-		close(ch)
-		l.subMu.Lock()
-		defer l.subMu.Unlock()
-
-		l.subscribers = lo.Without(l.subscribers, lc)
+	sub := &topicSubscriber{
+		ch:     ch,
+		ctx:    subCtx,
+		cancel: cancel,
 	}
 
-	l.subscribers = append(l.subscribers, lc)
+	l.subscribers[topic] = append(l.subscribers[topic], sub)
 
-	return lc
+	// Start a goroutine to clean up when context is cancelled
+	go func() {
+		<-subCtx.Done()
+		l.unregister(topic, sub)
+	}()
+
+	return ch
 }
 
-type ListenChan struct {
-	C     <-chan string
-	c     chan string
-	close func()
-}
+func (l *PostgreSQLListener) unregister(topic string, sub *topicSubscriber) {
+	l.subMu.Lock()
+	defer l.subMu.Unlock()
 
-func (l *ListenChan) Close() {
-	l.close()
+	subs := l.subscribers[topic]
+	l.subscribers[topic] = lo.Without(subs, sub)
+
+	// Clean up empty topic entries
+	if len(l.subscribers[topic]) == 0 {
+		delete(l.subscribers, topic)
+	}
+
+	close(sub.ch)
 }
 
 func (l *PostgreSQLListener) start() error {
@@ -160,10 +174,14 @@ func (l *PostgreSQLListener) forwardNotifications() error {
 				"topic":   topic,
 			})
 
-			for _, ch := range l.subscribers {
+			l.subMu.RLock()
+			subscribers := l.subscribers[topic]
+			l.subMu.RUnlock()
+
+			for _, sub := range subscribers {
 				// Non-blocking send to avoid deadlocks
 				select {
-				case ch.c <- topic:
+				case sub.ch <- struct{}{}:
 					l.logger.Trace("Forwarded notification to subscriber", watermill.LogFields{
 						"topic": topic,
 					})
@@ -189,18 +207,15 @@ func (l *PostgreSQLListener) Close() error {
 	l.cancel()
 	l.wg.Wait()
 
-	// Close all subscriber channels
-	// Copy the list first to avoid deadlock when closing channels
+	// Close all subscriber channels by cancelling their contexts
 	l.subMu.Lock()
-	subscribers := make([]*ListenChan, len(l.subscribers))
-	copy(subscribers, l.subscribers)
-	l.subscribers = nil
-	l.subMu.Unlock()
-
-	// Now close them without holding the lock
-	for _, ch := range subscribers {
-		close(ch.c)
+	for topic, subs := range l.subscribers {
+		for _, sub := range subs {
+			sub.cancel()
+		}
+		delete(l.subscribers, topic)
 	}
+	l.subMu.Unlock()
 
 	return nil
 }

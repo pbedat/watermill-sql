@@ -59,8 +59,8 @@ type SubscriberConfig struct {
 	// InitializeSchema option enables initializing schema on making subscription.
 	InitializeSchema bool
 
-	// NotifyChannel is used to notify subscribers about new messages.
-	NotifyChannel           <-chan string
+	// SubscribeNotifications returns a channel that notifies about new message for the given topic.
+	SubscribeNotifications  func(ctx context.Context, topic string) <-chan struct{}
 	NofifyQueryRetryTimeout time.Duration
 	NotifyQueryMaxRetries   int
 }
@@ -245,6 +245,12 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 	var sleepTime time.Duration = 0
 	fastRetries := 0
 
+	// Get the topic-specific notification channel if NotifyChannel is configured
+	var notifyChan <-chan struct{}
+	if s.config.SubscribeNotifications != nil {
+		notifyChan = s.config.SubscribeNotifications(ctx, topic)
+	}
+
 	for {
 		// Wait for either backoff timeout, notification, or cancellation
 		if sleepTime > 0 {
@@ -265,10 +271,7 @@ func (s *Subscriber) consume(ctx context.Context, topic string, out chan *messag
 				// Backoff timer expired, proceed to query
 				logger.Trace("Backoff timer expired, querying for messages", nil)
 
-			case notifiedTopic := <-s.config.NotifyChannel:
-				if topic != notifiedTopic {
-					continue
-				}
+			case <-notifyChan:
 				// Notification received, drain timer and query immediately
 				timer.Stop()
 				logger.Debug("Notification received, querying for messages immediately", nil)

@@ -56,12 +56,6 @@ func NewListener(pool *pgxpool.Pool, config PostgreSQLListenerConfig, logger wat
 		subscribers:            make(map[string][]*topicSubscriber),
 	}
 
-	// Start the single listener
-	if err := l.start(); err != nil {
-		cancel()
-		return nil, err
-	}
-
 	return l, nil
 }
 
@@ -107,7 +101,7 @@ func (l *PostgreSQLListener) unregister(topic string, sub *topicSubscriber) {
 	close(sub.ch)
 }
 
-func (l *PostgreSQLListener) start() error {
+func (l *PostgreSQLListener) Start() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
